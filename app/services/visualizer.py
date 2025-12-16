@@ -16,6 +16,7 @@ class GraphService:
             raise FileNotFoundError("Нет данных")
 
         df = pd.read_csv(self.FILENAME)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df[df["ticker"] == ticker.value]
 
         if period != Period.ALL:
