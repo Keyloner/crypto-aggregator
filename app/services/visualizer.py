@@ -1,57 +1,84 @@
 import matplotlib
-#Переключаем Matplotlib в режим для сервера
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
-import pandas as pd
 import io
-import os
+import pandas as pd
+import numpy as np
 from app.schemas.market_data import Ticker, Period
+from app.services.aggregator import PriceAggregator
+
 
 class GraphService:
-    FILENAME = "history.csv"
+    def __init__(self):
+        self.aggregator = PriceAggregator()
 
-    def create_price_chart(self, ticker: Ticker, period: Period) -> bytes:
-        if not os.path.exists(self.FILENAME):
-            raise FileNotFoundError("Нет данных")
+    async def create_comparison_chart(self, ticker: Ticker, period: Period) -> bytes:
+        binance_data, gecko_data = await self.aggregator.get_history(ticker, period)
 
-        df = pd.read_csv(self.FILENAME)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df[df["ticker"] == ticker.value]
+        if not binance_data and not gecko_data:
+            raise ValueError("Нет данных для графика")
 
-        if period != Period.ALL:
-            now = datetime.now()
-            if period == Period.HOUR_1:
-                cutoff = now - timedelta(hours=1)
-            elif period == Period.HOUR_24:
-                cutoff = now - timedelta(hours=24)
-            elif period == Period.DAY_7:
-                cutoff = now - timedelta(days=7)
-            else:
-                cutoff = now
+        plt.figure(figsize=(12,7))
 
-            df = df[df["timestamp"] >= cutoff]
+        if binance_data:
+            self._plot_series_with_stats(binance_data, "Binance", "blue")
 
-        if df.empty:
-            raise ValueError(f"Нет данных для графика {ticker.value} ({period.value})")
+        if gecko_data:
+            self._plot_series_with_stats(gecko_data, "CoinGecko", "green")
 
-        df = df.sort_values("timestamp")
 
-        plt.figure(figsize = (12,7))
-        plt.plot(df["timestamp"],df["price"],marker="o",linestyle="-")
-
-        plt.title(f"Price History: {ticker.value} ({period.value})")
-        plt.xlabel("Time")
+        plt.title(f"{ticker.value} Analysis ({period.value})")
+        plt.xlabel("Date")
         plt.ylabel("Price (USD)")
-        plt.grid(True)
-        plt.xticks(rotation=45)  # Наклонить подписи дат
-        plt.tight_layout()  # Чтобы подписи не обрезались
+        plt.legend()
+        plt.grid(True, alpha=0.2)
+        plt.gcf().autofmt_xdate()
+        plt.tight_layout()
 
-        #Сохраняем в оперативную память
         buf = io.BytesIO()
-        plt.savefig(buf, format='png')
+        plt.savefig(buf, format='png', dpi=100)
         plt.close()
-        #Перематываем в начало
         buf.seek(0)
-
         return buf.getvalue()
+
+    def _plot_series_with_stats(self, data, label, color):
+        df = pd.DataFrame(data, columns=["timestamp", "price"])
+
+        # Основная линия цены
+        plt.plot(df["timestamp"], df["price"], label=label, color=color, linewidth=2, alpha=0.9)
+
+        # СКОЛЬЗЯЩАЯ СРЕДНЯЯ
+        window_size = max(5, int(len(df) * 0.1))
+
+        rolling_mean = df["price"].rolling(window=window_size, center=True).mean()
+        rolling_std = df["price"].rolling(window=window_size, center=True).std()
+
+        rolling_mean = rolling_mean.fillna(method='bfill').fillna(method='ffill')
+        rolling_std = rolling_std.fillna(method='bfill').fillna(method='ffill')
+
+        plt.plot(df["timestamp"], rolling_mean, color=color, linestyle='--', alpha=0.7, linewidth=1.5,
+                 label=f"{label} Trend")
+
+        # Правило 3 сигм
+        SIGMA = 3
+        upper_bound = rolling_mean + (SIGMA * rolling_std)
+        lower_bound = rolling_mean - (SIGMA * rolling_std)
+
+
+        outliers = df[(df["price"] > upper_bound) | (df["price"] < lower_bound)]
+
+        if not outliers.empty:
+            plt.scatter(
+                outliers["timestamp"],
+                outliers["price"],
+                color="red", marker="x", s=40, zorder=6, label=f"{label} Anomaly"
+            )
+
+        min_idx = df["price"].idxmin()
+        max_idx = df["price"].idxmax()
+
+        plt.scatter(df.loc[max_idx, "timestamp"], df.loc[max_idx, "price"], color=color, marker="^", s=100,
+                    edgecolors="black", zorder=7)
+        plt.scatter(df.loc[min_idx, "timestamp"], df.loc[min_idx, "price"], color=color, marker="v", s=100,
+                    edgecolors="black", zorder=7)

@@ -7,9 +7,8 @@
 
 *   **Мульти-сорсинг:** Параллельный сбор цен с **Binance** и **CoinGecko**.
 *   **Аналитика:** Расчет min/max/avg, спреда и поиск аномалий (выбросов).
-*   **Визуализация:** Генерация графиков цен (PNG) с фильтрацией по периодам (`1h`, `24h`, `7d`).
+*   **Визуализация:** Генерация графиков цен (PNG) с фильтрацией по периодам (`24h`, `7d`, `30d`, `1y`).
 *   **Кэширование:** In-Memory Cache для снижения нагрузки на внешние API.
-*   **Хранение:** История сохраняется в CSV.
 
 ## 🛠 Стек технологий
 *   **Язык:** Python 3.10+
@@ -21,30 +20,36 @@
 ## 🏗 Архитектура
 
 ```mermaid
-graph TD
-    Client[👤 Client] -->|HTTP GET| API[🔌 FastAPI Router]
-    
-    subgraph "Crypto Aggregator Service"
-        API --> Aggregator[⚙️ Price Aggregator]
-        API --> Analytics[📊 Analytics Service]
-        API --> Visualizer[📈 Graph Service]
-        
-        Aggregator -->|Check| Cache[⚡ In-Memory Cache]
-        Aggregator -->|Save| Storage[💾 CSV Storage]
-        Aggregator -->|Fetch| Clients[🌍 API Clients]
-        
-        Analytics -->|Read| Storage
-        Visualizer -->|Read| Storage
-    end
-    
-    subgraph "External Sources"
-        Clients --> Binance
-        Clients --> CoinGecko
-    end
+flowchart TB
+    User(("👤 Client")) -- Requests --> Router["API"]
+    Router -- "1. Get Data" --> Aggregator["Price Aggregator"]
+    Aggregator -- Returns Data --> Router
+    Router -- "2. Calculate" --> Analytics["Analytics Service"]
+    Router -- "3. Draw" --> Visualizer["Graph Service"]
+    Aggregator -- Check --> Cache["⚡ In-Memory Cache"]
+    Aggregator -- Fetch --> BinClient["Binance Client"] & GeoClient["CoinGecko Client"]
+    BinClient <-- HTTP/JSON --> BinAPI["🟡 Binance API"]
+    GeoClient <-- HTTP/JSON --> GeoAPI["🟢 CoinGecko API"]
+
+     BinAPI:::external
+     GeoAPI:::external
+     User:::client
+     Router:::api
+     Aggregator:::logic
+     Analytics:::logic
+     Visualizer:::logic
+     Cache:::infra
+     BinClient:::infra
+     GeoClient:::infra
+    classDef client fill:#f9f,stroke:#333,stroke-width:2px
+    classDef api fill:#ade,stroke:#333,stroke-width:2px
+    classDef logic fill:#f96,stroke:#333,stroke-width:2px
+    classDef infra fill:#ff9,stroke:#333,stroke-width:2px
+    classDef external fill:#ddd,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
 
-## 🚀 Как запустить проект(должен быть установлен git и Docker):
+## 🚀 Как запустить проект(должен быть установлен Git и Docker):
 
 1.  **Скачайте проект:**
     Откройте терминал и введите:

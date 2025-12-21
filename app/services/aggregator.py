@@ -1,54 +1,51 @@
 import asyncio
-from typing import List
 import time
-from app.schemas.market_data import Ticker, CryptoPrice
+from typing import List, Tuple
+from app.schemas.market_data import Ticker, CryptoPrice, Period
 from app.services.api_clients import BinanceClient, CoinGeckoClient
-from app.services.storage import CsvStorage
 
+# Глобальный кэш
 CACHE = {}
-CACHE_TTL = 10 #время жизни = 10 секунд
+
 
 class PriceAggregator:
     def __init__(self):
-        self.clients = [
-            BinanceClient(),
-            CoinGeckoClient()
-        ]
-        self.storage = CsvStorage()
+        self.clients = [BinanceClient(), CoinGeckoClient()]
 
-    async def get_prices(self,ticker: Ticker) -> List[CryptoPrice]:
-        ticker_key = ticker.value
-        current_time = time.time()
+    # Текущая цена
+    async def get_prices(self, ticker: Ticker) -> List[CryptoPrice]:
+        cache_key = f"price_{ticker.value}"
+        if self._check_cache(cache_key): return CACHE[cache_key]["data"]
 
-        if ticker_key in CACHE:
-            saved_data = CACHE[ticker_key]
-
-            #если прошло меньше 10 сек:
-            if current_time - saved_data["time"] < CACHE_TTL:
-                print(f"Из кэша {ticker_key}")
-                return saved_data["data"]
-
-        #если кэша нет или он старый:
-        print(f"Запрос к API {ticker_key}")
-        tasks =[]
-        for client in self.clients:
-            tasks.append(client.get_current_price(ticker))
-                                                #Если кто-то упал с ошибкой, то вернет ошибку
+        tasks = [client.get_current_price(ticker) for client in self.clients]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        valid = [r for r in results if not isinstance(r, Exception)]
 
-        valid_prices = []
-        for res in results:
-            if isinstance(res,Exception):
-                print(f"Aggregator error: {res}")
-            else:
-                valid_prices.append(res)
+        if valid: self._set_cache(cache_key, valid, ttl=10)
+        return valid
 
-        if valid_prices:
-            self.storage.save(valid_prices)
-            #сохраняем в кэш
-            CACHE[ticker_key] = {
-                "data": valid_prices,
-                "time": current_time
-            }
+    # История
+    async def get_history(self, ticker: Ticker, period: Period) -> Tuple[list, list]:
+        cache_key = f"hist_{ticker.value}_{period.value}"
+        if self._check_cache(cache_key): return CACHE[cache_key]["data"]
 
-        return valid_prices
+        b_task = self.clients[0].get_history(ticker, period)
+        g_task = self.clients[1].get_history(ticker, period)
+
+        results = await asyncio.gather(b_task, g_task, return_exceptions=True)
+
+        # Если была ошибка, вернем пустой список
+        binance_data = results[0] if not isinstance(results[0], Exception) else []
+        gecko_data = results[1] if not isinstance(results[1], Exception) else []
+
+        # Кэшируем на 60 сек,т.к. 'тяжелые данные'
+        if binance_data or gecko_data:
+            self._set_cache(cache_key, (binance_data, gecko_data), ttl=60)
+
+        return binance_data, gecko_data
+
+    def _check_cache(self, key: str) -> bool:
+        return key in CACHE and time.time() < CACHE[key]["expires"]
+
+    def _set_cache(self, key: str, data, ttl: int):
+        CACHE[key] = {"data": data, "expires": time.time() + ttl}
