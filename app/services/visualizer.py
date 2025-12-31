@@ -54,8 +54,8 @@ class GraphService:
         rolling_mean = df["price"].rolling(window=window_size, center=True).mean()
         rolling_std = df["price"].rolling(window=window_size, center=True).std()
 
-        rolling_mean = rolling_mean.fillna(method='bfill').fillna(method='ffill')
-        rolling_std = rolling_std.fillna(method='bfill').fillna(method='ffill')
+        rolling_mean = rolling_mean.bfill().ffill()
+        rolling_std = rolling_std.bfill().ffill()
 
         plt.plot(df["timestamp"], rolling_mean, color=color, linestyle='--', alpha=0.7, linewidth=1.5,
                  label=f"{label} Trend")
